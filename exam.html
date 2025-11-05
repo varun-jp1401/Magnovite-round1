@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proctored Coding Test</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Use Inter font */
+        body, html {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden; /* Prevent scrolling on the body */
+            /* Attempt to disable text selection on the whole page */
+            user-select: none; 
+            -webkit-user-select: none; /* Safari */
+            -moz-user-select: none; /* Firefox */
+            -ms-user-select: none; /* IE10+ */
+        }
+        #editor-container {
+            width: 100%;
+            height: 100%; /* Will be controlled by flex */
+        }
+        
+        /* Custom modal styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.75);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+        }
+        .modal-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            text-align: center;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            max-width: 90%;
+            width: 500px;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-['Inter']">
+
+    <div id="test-interface" class="h-screen w-screen flex-col hidden">
+        <header class="bg-gray-800 text-white p-3 flex justify-between items-center shadow-md flex-shrink-0">
+            <div>
+                <span class="text-xl font-bold">Debugging Round</span>
+                <span class="ml-4">Select Language:</span>
+                <button data-lang="python" class="lang-btn bg-blue-600 hover:bg-blue-700 text-white py-1 px-3 rounded-md ml-2 text-sm">Python</button>
+                <button data-lang="java" class="lang-btn bg-gray-600 hover:bg-gray-500 text-white py-1 px-3 rounded-md ml-2 text-sm">Java</button>
+                <button data-lang="c" class="lang-btn bg-gray-600 hover:bg-gray-500 text-white py-1 px-3 rounded-md ml-2 text-sm">C</button>
+                <button data-lang="cpp" class="lang-btn bg-gray-600 hover:bg-gray-500 text-white py-1 px-3 rounded-md ml-2 text-sm">C++</button>
+            </div>
+            <div>
+                <button id="close-test-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg text-sm">Close Test</button>
+            </div>
+        </header>
+
+        <main class="flex-grow flex flex-col md:flex-row p-2 gap-2" style="height: calc(100vh - 60px);"> <div id="editor-container" class="w-full md:w-3/5 h-1/2 md:h-full shadow-lg rounded-lg overflow-hidden"></div>
+            
+            <div class="w-full md:w-2/5 h-1/2 md:h-full bg-gray-800 rounded-lg p-4 flex flex-col shadow-inner">
+                <h2 class="text-lg font-semibold mb-3 border-b border-gray-600 pb-2">Output</h2>
+                <pre id="output-panel" class="flex-grow bg-gray-900 rounded-md p-3 text-gray-300 text-sm overflow-auto">Click "Run Code" to see output...</pre>
+                <button id="run-code-btn" class="mt-4 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg w-full" disabled>
+                    Run Code
+                </button>
+                <p class="text-xs text-gray-500 text-center mt-2">Code execution powered by Judge0</p>
+            </div>
+        </main>
+    </div>
+
+    <div id="start-modal" class="modal-overlay">
+        <div class="modal-content text-gray-900">
+            <h2 class="text-2xl font-bold mb-4">Ready to Begin?</h2>
+            <p class="mb-6">Click the button below to enter full-screen mode and start the test.</p>
+            <button id="enter-fullscreen-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg text-xl shadow-lg transition-transform transform hover:scale-105 duration-200" disabled>
+                Loading Test...
+            </button>
+        </div>
+    </div>
+
+    <div id="violation-modal" class="modal-overlay hidden">
+        <div class="modal-content text-gray-900">
+            <h2 id="violation-title" class="text-2xl font-bold mb-4 text-red-600">Test Ended</h2>
+            <p id="violation-message" class="text-lg mb-6">You have left the proctored environment.</p>
+            <p class="text-sm text-gray-600 mb-4">Your attempt has been logged. You may now close this window.</p>
+            <button id="admin-unlock-btn" class="text-sm text-blue-600 hover:underline">Admin Unlock</button>
+        </div>
+    </div>
+
+    <div id="admin-modal" class="modal-overlay hidden">
+        <div class="modal-content text-gray-900">
+            <h2 class="text-2xl font-bold mb-4">Admin Unlock</h2>
+            <p class="mb-4">Enter the secret key to unlock the test.</p>
+            <input type="password" id="admin-key-input" class="border border-gray-300 p-2 rounded-md w-full mb-4" placeholder="Enter secret key...">
+            <div id="admin-error" class="text-red-600 text-sm mb-4 hidden">Incorrect key.</div>
+            <button id="admin-submit-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg">
+                Unlock
+            </button>
+            <button id="admin-cancel-btn" class="ml-2 text-gray-600 hover:underline">Cancel</button>
+        </div>
+    </div>
+
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+    <script>
+        // --- ADMIN KEY AND CONSTANTS ---
+        const ADMIN_KEY = 'proctor123'; // Change this to your own secret key!
+        const LOCK_STORAGE_KEY = 'testLocked';
+        
+        // Sample code for the debugging round
+        const sampleCode = {
+            python: `# Welcome to the debugging round!
+# Find the bug in this function. It should return the sum of a and b.
+
+def add(a, b):
+    # There is a bug on the next line
+    return a - b
+
+print(f"2 + 3 = {add(2, 3)}") # Should print 5
+`,
+            java: `// Welcome to the debugging round!
+// Find the bug in this class. The 'add' method should return the sum of a and b.
+
+class Calculator {
+    public int add(int a, int b) {
+        // There is a bug on the next line
+        return a * b;
+    }
+
+    public static void main(String[] args) {
+        Calculator calc = new Calculator();
+        System.out.println("2 + 3 = " + calc.add(2, 3)); // Should print 5
+    }
+}
+`,
+            c: `// Welcome to the debugging round!
+// Find the bug in this function. It should return the sum of a and b.
+#include <stdio.h>
+
+int add(int a, int b) {
+    // There is a bug on the next line
+    return a / (b + 1); // Buggy line
+}
+
+int main() {
+    printf("2 + 3 = %d\\n", add(2, 3)); // Should print 5
+    return 0;
+}
+`,
+            cpp: `// Welcome to the debugging round!
+// Find the bug in this function. It should return the sum of a and b.
+#include <iostream>
+
+int add(int a, int b) {
+    // There is a bug on the next line
+    return a * b;
+}
+
+int main() {
+    std::cout << "2 + 3 = " << add(2, 3) << std::endl; // Should print 5
+    return 0;
+}
+`
+        };
+
+        let monacoEditor;
+        let testActive = false;
+        let currentLanguage = 'python';
+        const startModal = document.getElementById('start-modal');
+        const testInterface = document.getElementById('test-interface');
+        const violationModal = document.getElementById('violation-modal');
+        const enterFullscreenBtn = document.getElementById('enter-fullscreen-btn');
+        const closeTestBtn = document.getElementById('close-test-btn');
+        const langButtons = document.querySelectorAll('.lang-btn');
+        const outputPanel = document.getElementById('output-panel');
+        const runCodeBtn = document.getElementById('run-code-btn');
+
+        // Admin Modal elements
+        const adminModal = document.getElementById('admin-modal');
+        const adminUnlockBtn = document.getElementById('admin-unlock-btn');
+        const adminCancelBtn = document.getElementById('admin-cancel-btn');
+        const adminSubmitBtn = document.getElementById('admin-submit-btn');
+        const adminKeyInput = document.getElementById('admin-key-input');
+        const adminError = document.getElementById('admin-error');
+
+        // API setup (using your key)
+        const YOUR_RAPIDAPI_KEY = '0c4fd50453msh238b845b4cf6b9fp10516cjsn6bbdb5892f7c'; 
+        const languageMap = {
+            python: 71, 
+            java: 62,   
+            c: 50,      
+            cpp: 54     
+        };
+
+        // --- NEW/MODIFIED: Security Handlers ---
+
+        /**
+         * Global function to block copy/cut/paste/contextmenu events and keydown shortcuts.
+         */
+        function blockSecurityEvents(e) {
+            // 1. Block standard cut/copy/paste events and right-click
+            if (e.type === 'cut' || e.type === 'copy' || e.type === 'paste' || e.type === 'contextmenu') {
+                e.preventDefault();
+                if (e.type !== 'contextmenu' && testActive) {
+                     console.warn(`${e.type} action blocked for security.`);
+                }
+                return;
+            }
+
+            // 2. Block keyboard shortcuts (Ctrl+V, Cmd+V)
+            if (e.type === 'keydown') {
+                const isV = e.key === 'v' || e.key === 'V';
+                // metaKey is Cmd (Mac), ctrlKey is Ctrl (Windows/Linux)
+                const isCmdOrCtrl = e.metaKey || e.ctrlKey; 
+
+                if (isV && isCmdOrCtrl) {
+                    e.preventDefault();
+                    if (testActive) {
+                        console.warn('Keyboard Paste (Ctrl/Cmd+V) blocked for security.');
+                    }
+                }
+            }
+        }
+
+        // --- Check for lock on page load and add global security listeners ---
+        document.addEventListener('DOMContentLoaded', () => {
+            
+            // --- MODIFIED: The problematic line "localStorage.removeItem(LOCK_STORAGE_KEY);"
+            // --- has been REMOVED from here to ensure the lock persists on reload.
+            
+            // Add global event listeners immediately for security
+            document.addEventListener('cut', blockSecurityEvents);
+            document.addEventListener('copy', blockSecurityEvents);
+            document.addEventListener('paste', blockSecurityEvents);
+            document.addEventListener('contextmenu', blockSecurityEvents);
+            document.addEventListener('keydown', blockSecurityEvents); 
+            
+            // This check will now work correctly and find the lock if it exists
+            if (localStorage.getItem(LOCK_STORAGE_KEY) === 'true') {
+                // Lock detected from previous session
+                startModal.classList.add('hidden');
+                document.getElementById('violation-title').textContent = 'Test Locked';
+                document.getElementById('violation-message').textContent = 'This test session is locked. An admin must unlock it to proceed.';
+                violationModal.classList.remove('hidden');
+            }
+        });
+
+
+        // --- 1. Initialize Monaco Editor ---
+        require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' }});
+        require(['vs/editor/editor.main'], function() {
+            monacoEditor = monaco.editor.create(document.getElementById('editor-container'), {
+                value: sampleCode.python, 
+                language: 'python',       
+                theme: 'vs-dark',
+                automaticLayout: true
+            });
+            
+            // Disable editor's built-in context menu (right-click)
+            monacoEditor.updateOptions({ contextmenu: false }); 
+            
+            // Code Execution Logic
+            runCodeBtn.addEventListener('click', () => {
+                if (YOUR_RAPIDAPI_KEY === 'PASTE_YOUR_RAPIDAPI_KEY_HERE') {
+                    outputPanel.textContent = 'Error: API Key is not set.\n\nPlease edit exam.html and paste your RapidAPI key.';
+                    return;
+                }
+                runCode();
+            });
+
+            // --- MODIFIED: FIX FOR PROBLEM 1 ---
+            // Now that the editor is loaded and the click listener for runCodeBtn
+            // is attached, we can safely enable the "Start Test" button.
+            enterFullscreenBtn.disabled = false;
+            enterFullscreenBtn.textContent = 'Start Test in Fullscreen';
+        });
+
+        // --- 2. Language Switching (FIXED) ---
+        langButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                // The testActive check prevents interaction before full-screen mode is active,
+                // which is required for proctoring.
+                if (!testActive) return; 
+                
+                const lang = btn.dataset.lang;
+                currentLanguage = lang;
+                
+                if (monacoEditor) {
+                    // 1. Update editor content
+                    monacoEditor.setValue(sampleCode[lang]);
+                    
+                    // 2. Update editor language mode
+                    monaco.editor.setModelLanguage(monacoEditor.getModel(), lang);
+
+                    // 3. Force a layout refresh to ensure visual update (Fixes some rendering bugs)
+                    monacoEditor.layout();
+                }
+
+                // Update button styles: set current button to blue, others to gray
+                langButtons.forEach(b => b.classList.replace('bg-blue-600', 'bg-gray-600'));
+                btn.classList.replace('bg-gray-600', 'bg-blue-600');
+            });
+        });
+
+        // --- 3. Proctoring Logic (Unchanged) ---
+        
+        function endTest(title, message) {
+            if (!testActive) return;
+            
+            testActive = false;
+            console.warn(`Test ended: ${title} - ${message}`);
+
+            // Set the lock flag in localStorage (prevents easy refresh restart)
+            localStorage.setItem(LOCK_STORAGE_KEY, 'true');
+
+            // Show violation modal
+            document.getElementById('violation-title').textContent = title;
+            document.getElementById('violation-message').textContent = message;
+            violationModal.classList.remove('hidden');
+
+            // Disable editor
+            if (monacoEditor) {
+                monacoEditor.updateOptions({ readOnly: true });
+            }
+
+            // Exit fullscreen
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            }
+        }
+
+        function addProctoringListeners() {
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden && testActive) {
+                    endTest('Test Ended', 'You switched tabs or minimized the window.');
+                }
+            });
+
+            document.addEventListener('fullscreenchange', () => {
+                if (!document.fullscreenElement && testActive) {
+                    endTest('Test Ended', 'You have exited full-screen mode.');
+                }
+            });
+        }
+        
+        enterFullscreenBtn.addEventListener('click', () => {
+            document.documentElement.requestFullscreen().then(() => {
+                testActive = true;
+                startModal.classList.add('hidden');
+                testInterface.classList.remove('hidden');
+                testInterface.classList.add('flex');
+                addProctoringListeners();
+                
+                // --- MODIFIED: FIX FOR PROBLEM 1 ---
+                // This line was moved to the 'require' callback to prevent a race condition.
+                // runCodeBtn.textContent = 'Run Code'; // This line was redundant anyway.
+                
+                // We *still* enable the button here, because the 'require' callback
+                // might have already finished.
+                runCodeBtn.disabled = false;
+                
+            }).catch(err => {
+                console.error("Fullscreen error:", err);
+                // Note: Using alert() here as a fallback since a modal is blocked by fullscreen state
+                alert(`Error: ${err.message}. Fullscreen is required to start the test.`);
+            });
+        });
+
+        closeTestBtn.addEventListener('click', () => {
+            endTest('Test Closed', 'You have voluntarily closed the test.');
+        });
+        
+        // --- 4. ADMIN MODAL LOGIC (No Reload) ---
+        adminUnlockBtn.addEventListener('click', () => {
+            violationModal.classList.add('hidden');
+            adminModal.classList.remove('hidden');
+            adminKeyInput.value = '';
+            adminError.classList.add('hidden');
+            adminKeyInput.focus();
+        });
+
+        adminCancelBtn.addEventListener('click', () => {
+            adminModal.classList.add('hidden');
+            violationModal.classList.remove('hidden');
+        });
+
+        adminSubmitBtn.addEventListener('click', () => {
+            if (adminKeyInput.value === ADMIN_KEY) {
+                // 1. Clear the lock
+                localStorage.removeItem(LOCK_STORAGE_KEY);
+                
+                // 2. Hide admin modal
+                adminModal.classList.add('hidden');
+                
+                // 3. Re-enable test interface
+                testActive = true;
+                violationModal.classList.add('hidden');
+                testInterface.classList.remove('hidden');
+                testInterface.classList.add('flex');
+                
+                // 4. Re-enable editor
+                if (monacoEditor) {
+                    monacoEditor.updateOptions({ readOnly: false });
+                    monacoEditor.focus();
+                }
+
+                // 5. Re-request fullscreen (optional, but good practice)
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.error("Could not re-enter fullscreen:", err);
+                });
+
+            } else {
+                // Incorrect key
+                adminError.classList.remove('hidden');
+            }
+        });
+
+        // --- 5. Run Code Function (Unchanged) ---
+        async function runCode() {
+            const code = monacoEditor.getValue();
+            const languageId = languageMap[currentLanguage];
+
+            outputPanel.textContent = 'Running code...';
+            runCodeBtn.disabled = true;
+
+            const options = {
+                method: 'POST',
+                headers: {
+                    'content-type': 'application/json',
+                    'X-RapidAPI-Key': YOUR_RAPIDAPI_KEY, 
+                    'X-RapidAPI-Host': 'judge0-ce.p.rapidapi.com'
+                },
+                body: JSON.stringify({
+                    language_id: languageId,
+                    source_code: code,
+                    stdin: '' 
+                })
+            };
+
+            try {
+                const response = await fetch('https://judge0-ce.p.rapidapi.com/submissions?base64_encoded=false&wait=true', options);
+                
+                if (!response.ok) {
+                    throw new Error(`API Error: ${response.status} ${response.statusText}`);
+                }
+                
+                const result = await response.json();
+
+                if (result.stdout) {
+                    outputPanel.textContent = result.stdout;
+                } else if (result.stderr) {
+                    outputPanel.textContent = `Error:\n${result.stderr}`;
+                } else if (result.compile_.output) {
+                    outputPanel.textContent = `Compile Error:\n${result.compile_output}`;
+                } else {
+                    outputPanel.textContent = `Execution Finished: ${result.status.description}`;
+                }
+
+            } catch (error) {
+                console.error('Error running code:', error);
+                outputPanel.textContent = `Network or API error. See console for details.\n${error.message}`;
+            } finally {
+                runCodeBtn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
